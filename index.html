@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Meta Navigation HUD</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+<style>
+:root{--bg:#080a0b;--panel:#111516;--text:#f7f7f7;--muted:#aab0b4;--accent:#55f879;--route:#4b8cff;--border:#303638}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input{font:inherit}
+#app{min-height:100dvh;display:flex;flex-direction:column}.top{padding:max(14px,env(safe-area-inset-top)) 14px 10px;display:flex;gap:8px;align-items:center;background:#090b0c;z-index:1001}.top input{min-width:0;flex:1;background:#171b1d;border:1px solid var(--border);border-radius:14px;padding:13px 14px;color:white;font-size:16px}.btn{border:0;border-radius:13px;padding:12px 14px;font-weight:750;background:#24292b;color:white}.btn.primary{background:var(--accent);color:#041006}.btn:disabled{opacity:.5}
+#mapWrap{position:relative;flex:1;min-height:430px}#map{position:absolute;inset:0}.turnCard{position:absolute;left:12px;right:12px;top:12px;z-index:800;background:rgba(9,12,13,.94);border:1px solid #333;border-radius:18px;padding:13px 15px;display:none;align-items:center;gap:14px;box-shadow:0 6px 20px rgba(0,0,0,.28)}.arrow{font-size:45px;line-height:1;width:58px;text-align:center}.turnText{min-width:0}.distance{font-size:17px;color:var(--accent);font-weight:800}.instruction{font-size:22px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.street{font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mapBtns{position:absolute;right:12px;bottom:18px;z-index:800;display:grid;gap:8px}.round{width:48px;height:48px;border-radius:50%;border:1px solid #3a4042;background:rgba(15,18,19,.94);color:#fff;font-size:22px;font-weight:700}.bottom{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:1px;background:#2b3032;border-top:1px solid #2b3032}.stat{background:#0e1112;padding:12px 10px;text-align:center}.stat b{display:block;font-size:21px}.stat span{color:var(--muted);font-size:12px}.status{padding:7px 12px;color:var(--muted);font-size:12px;background:#0b0d0e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#hud{display:none;min-height:100dvh;padding:24px;background:#000;position:relative}.hudTop{display:flex;justify-content:space-between;color:#aaa;font-size:17px}.hudMain{margin-top:55px;text-align:center}.hudArrow{font-size:130px;line-height:1}.hudDist{font-size:48px;font-weight:900;color:var(--accent);margin-top:8px}.hudInstr{font-size:42px;font-weight:900;margin-top:14px}.hudStreet{font-size:28px;color:#c6c6c6;margin-top:8px}.hudStats{position:absolute;left:20px;right:20px;bottom:34px;display:flex;justify-content:space-around;font-size:22px;color:#ccc}.hudExit{position:absolute;right:18px;top:18px}.leaflet-control-attribution{font-size:9px!important}
+@media(max-width:520px){.top{flex-wrap:wrap}.top input{flex-basis:100%}.top .btn{flex:1}.instruction{font-size:19px}.mapBtns{bottom:12px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <input id="dest" autocomplete="street-address" placeholder="Destination or address" aria-label="Destination" />
+    <button id="start" class="btn primary">Navigate</button>
+    <button id="hudBtn" class="btn">HUD</button>
+  </div>
+  <div id="mapWrap">
+    <div id="map"></div>
+    <div id="turnCard" class="turnCard"><div id="arrow" class="arrow">↑</div><div class="turnText"><div id="turnDistance" class="distance">—</div><div id="instruction" class="instruction">Ready</div><div id="street" class="street"></div></div></div>
+    <div class="mapBtns"><button id="zoomIn" class="round" aria-label="Zoom in">+</button><button id="zoomOut" class="round" aria-label="Zoom out">−</button><button id="recenter" class="round" aria-label="Recenter">◎</button></div>
+  </div>
+  <div class="bottom"><div class="stat"><b id="eta">—</b><span>ETA</span></div><div class="stat"><b id="remaining">—</b><span>REMAINING</span></div><div class="stat"><b id="speed">0</b><span>MPH</span></div></div>
+  <div id="status" class="status">Tap Navigate and allow location access.</div>
+</div>
+<div id="hud">
+  <button id="hudExit" class="btn hudExit">Map</button>
+  <div class="hudTop"><span>Navigation HUD</span><span id="hudGps">GPS —</span></div>
+  <div class="hudMain"><div id="hudArrow" class="hudArrow">↑</div><div id="hudDist" class="hudDist">—</div><div id="hudInstr" class="hudInstr">Ready</div><div id="hudStreet" class="hudStreet"></div></div>
+  <div class="hudStats"><span id="hudEta">— ETA</span><span id="hudRemain">—</span><span id="hudSpeed">0 MPH</span></div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+(()=>{
+const $=id=>document.getElementById(id); const TRIP_KEY='metaNavActiveTripV2'; let map,userMarker,headingMarker,routeLayer,destMarker,watchId=null,lastPos=null,lastHeading=null,route=null,steps=[],stepIndex=0,lastReroute=0,follow=true,currentDestination=null,currentDestinationText='';
+const mapEl=$('map');
+map=L.map(mapEl,{zoomControl:false}).setView([37.9,-122.3],13);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,keepBuffer:5,updateWhenIdle:false,updateWhenZooming:true,attribution:'© OpenStreetMap contributors'}).addTo(map);
+const setStatus=t=>$('status').textContent=t;
+function miles(m){return m<160?Math.round(m*3.28084)+' ft':(m/1609.344).toFixed(m<16093?1:0)+' mi'}
+function mph(v){return Number.isFinite(v)&&v>=0?Math.round(v*2.23694):0}
+function fmtDuration(sec){if(!Number.isFinite(sec))return '—';const min=Math.round(sec/60);if(min<60)return min+' min';return Math.floor(min/60)+'h '+(min%60)+'m'}
+function bearing(a,b){const p1=a[0]*Math.PI/180,p2=b[0]*Math.PI/180,dl=(b[1]-a[1])*Math.PI/180;const y=Math.sin(dl)*Math.cos(p2),x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);return (Math.atan2(y,x)*180/Math.PI+360)%360}
+function hav(a,b){const R=6371000,p1=a[0]*Math.PI/180,p2=b[0]*Math.PI/180,dp=(b[0]-a[0])*Math.PI/180,dl=(b[1]-a[1])*Math.PI/180;const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function iconFor(type,mod){const s=(type+' '+(mod||'')).toLowerCase();if(s.includes('uturn'))return '↶';if(s.includes('sharp right'))return '↱';if(s.includes('right'))return '→';if(s.includes('sharp left'))return '↰';if(s.includes('left'))return '←';if(s.includes('roundabout')||s.includes('rotary'))return '↻';if(s.includes('arrive'))return '●';return '↑'}
+function stepLabel(s){if(!s)return ['Ready',''];const m=s.maneuver||{},type=m.type||'continue',mod=m.modifier||'',name=s.name||'';let txt='Continue';if(type==='depart')txt='Start';else if(type==='arrive')txt='Arrive';else if(type==='turn')txt='Turn '+mod;else if(type==='merge')txt='Merge '+mod;else if(type==='fork')txt='Keep '+mod;else if(type==='roundabout'||type==='rotary')txt='Enter roundabout';else if(type==='new name')txt='Continue';return [txt.replace(/\b\w/g,c=>c.toUpperCase()),name]}
+function renderStep(){const s=steps[stepIndex];if(!s)return;const m=s.maneuver||{},loc=m.location?[m.location[1],m.location[0]]:lastPos,dist=lastPos&&loc?hav(lastPos,loc):s.distance;const [txt,name]=stepLabel(s),ic=iconFor(m.type,m.modifier);$('turnCard').style.display='flex';$('arrow').textContent=$('hudArrow').textContent=ic;$('turnDistance').textContent=$('hudDist').textContent=miles(Math.max(0,dist||0));$('instruction').textContent=$('hudInstr').textContent=txt;$('street').textContent=$('hudStreet').textContent=name;}
+function updateStats(){if(!route||!lastPos)return;let rem=0;for(let i=stepIndex;i<steps.length;i++)rem+=steps[i].distance||0;const dur=route.duration*(rem/Math.max(route.distance,1));$('remaining').textContent=$('hudRemain').textContent=miles(rem);$('eta').textContent=fmtDuration(dur);$('hudEta').textContent=fmtDuration(dur)+' ETA'}
+function onPosition(p){const c=p.coords,pos=[c.latitude,c.longitude],prevPos=lastPos;lastPos=pos;const sp=mph(c.speed);$('speed').textContent=sp;$('hudSpeed').textContent=sp+' MPH';$('hudGps').textContent='GPS ±'+Math.round(c.accuracy)+'m';if(!userMarker)userMarker=L.circleMarker(pos,{radius:9,weight:3,color:'#fff',fillColor:'#4b8cff',fillOpacity:1}).addTo(map);else userMarker.setLatLng(pos);
+const h=Number.isFinite(c.heading)?c.heading:(prevPos&&hav(prevPos,pos)>3?bearing(prevPos,pos):lastHeading);if(Number.isFinite(h))lastHeading=h;
+if(!headingMarker){headingMarker=L.marker(pos,{interactive:false,icon:L.divIcon({className:'',iconSize:[42,42],iconAnchor:[21,21],html:'<div id=headingArrow style=\"width:42px;height:42px;display:grid;place-items:center;font-size:30px;color:white;text-shadow:0 1px 5px #000;transform-origin:center\">▲</div>'})}).addTo(map);}else headingMarker.setLatLng(pos);
+const ha=document.getElementById('headingArrow');if(ha&&Number.isFinite(lastHeading))ha.style.transform='rotate('+lastHeading+'deg)';
+if(follow){const z=Math.max(map.getZoom(),17);map.setView(pos,z,{animate:true});}if(steps.length){const s=steps[stepIndex],ml=s?.maneuver?.location;if(ml){const d=hav(pos,[ml[1],ml[0]]);if(d<28&&stepIndex<steps.length-1){stepIndex++;renderStep();}else renderStep();}updateStats();checkOffRoute(pos);}else setStatus('GPS active. Enter a destination.');}
+function geoError(e){setStatus('Location error: '+e.message)}
+function ensureGPS(){return new Promise((resolve,reject)=>{if(lastPos)return resolve(lastPos);if(!navigator.geolocation)return reject(new Error('GPS is not available in this browser.'));navigator.geolocation.getCurrentPosition(p=>{onPosition(p);resolve(lastPos)},reject,{enableHighAccuracy:true,timeout:15000,maximumAge:2000});if(watchId===null)watchId=navigator.geolocation.watchPosition(onPosition,geoError,{enableHighAccuracy:true,maximumAge:1000,timeout:20000});});}
+async function geocode(q){const u='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q='+encodeURIComponent(q);const r=await fetch(u,{headers:{'Accept':'application/json'}});if(!r.ok)throw Error('Destination search failed');const j=await r.json();if(!j.length)throw Error('Destination not found');return [Number(j[0].lat),Number(j[0].lon),j[0].display_name]}
+function saveTrip(){if(!currentDestination)return;try{localStorage.setItem(TRIP_KEY,JSON.stringify({destination:currentDestination,text:currentDestinationText,hud:$('hud').style.display==='block',savedAt:Date.now()}));}catch(e){}}
+function clearTrip(){try{localStorage.removeItem(TRIP_KEY)}catch(e){}}
+async function calculate(dest){currentDestination=[Number(dest[0]),Number(dest[1])];const [lat,lon]=lastPos;const u=`https://router.project-osrm.org/route/v1/driving/${lon},${lat};${dest[1]},${dest[0]}?overview=full&geometries=geojson&steps=true`;const r=await fetch(u);if(!r.ok)throw Error('Routing service unavailable');const j=await r.json();if(j.code!=='Ok'||!j.routes?.length)throw Error('No driving route found');route=j.routes[0];steps=route.legs.flatMap(l=>l.steps);stepIndex=0;const coords=route.geometry.coordinates.map(c=>[c[1],c[0]]);if(routeLayer)map.removeLayer(routeLayer);routeLayer=L.polyline(coords,{weight:7,opacity:.9,color:'#4b8cff'}).addTo(map);if(destMarker)map.removeLayer(destMarker);destMarker=L.marker([dest[0],dest[1]]).addTo(map);map.fitBounds(routeLayer.getBounds(),{padding:[50,50]});follow=true;renderStep();updateStats();saveTrip();setStatus('Route active • '+miles(route.distance)+' • '+fmtDuration(route.duration));}
+async function startNav(){const q=$('dest').value.trim();if(!q){setStatus('Enter a destination first.');$('dest').focus();return}const b=$('start');b.disabled=true;b.textContent='Loading…';try{await ensureGPS();setStatus('Finding destination…');const d=await geocode(q);currentDestinationText=q;setStatus('Calculating route…');await calculate(d);}catch(e){setStatus(e.message||String(e))}finally{b.disabled=false;b.textContent='Navigate'}}
+function pointSegDist(p,a,b){const x=p[1],y=p[0],x1=a[1],y1=a[0],x2=b[1],y2=b[0],dx=x2-x1,dy=y2-y1,t=Math.max(0,Math.min(1,((x-x1)*dx+(y-y1)*dy)/(dx*dx+dy*dy||1)));return hav(p,[y1+t*dy,x1+t*dx])}
+function checkOffRoute(pos){if(!route?.geometry?.coordinates||Date.now()-lastReroute<30000)return;const cs=route.geometry.coordinates;let best=Infinity;for(let i=0;i<cs.length-1;i+=Math.max(1,Math.floor(cs.length/120))){best=Math.min(best,pointSegDist(pos,[cs[i][1],cs[i][0]],[cs[Math.min(i+1,cs.length-1)][1],cs[Math.min(i+1,cs.length-1)][0]]));}if(best>100&&destMarker){lastReroute=Date.now();setStatus('Off route — recalculating…');calculate([destMarker.getLatLng().lat,destMarker.getLatLng().lng]).catch(e=>setStatus(e.message));}}
+$('start').addEventListener('click',startNav);$('dest').addEventListener('keydown',e=>{if(e.key==='Enter')startNav()});$('zoomIn').onclick=()=>map.zoomIn();$('zoomOut').onclick=()=>map.zoomOut();$('recenter').onclick=()=>{follow=true;if(lastPos)map.setView(lastPos,18)};map.on('dragstart',()=>follow=false);
+$('hudBtn').onclick=()=>{$('app').style.display='none';$('hud').style.display='block';saveTrip();renderStep()};$('hudExit').onclick=()=>{$('hud').style.display='none';$('app').style.display='flex';saveTrip();setTimeout(()=>map.invalidateSize(),50)};
+async function restoreTrip(){let saved=null;try{saved=JSON.parse(localStorage.getItem(TRIP_KEY)||'null')}catch(e){}if(!saved?.destination)return;currentDestination=saved.destination;currentDestinationText=saved.text||'Saved destination';$('dest').value=currentDestinationText;setStatus('Saved trip found — getting your current location…');try{await ensureGPS();setStatus('Resuming navigation…');await calculate(currentDestination);if(saved.hud){$('app').style.display='none';$('hud').style.display='block';renderStep();}else{setTimeout(()=>map.invalidateSize(),50)}}catch(e){setStatus('Could not resume automatically: '+(e.message||e))}}
+window.addEventListener('pagehide',saveTrip);document.addEventListener('visibilitychange',()=>{if(document.hidden)saveTrip()});restoreTrip();
+})();
+</script>
+</body>
+</html>
